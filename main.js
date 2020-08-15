@@ -1,12 +1,20 @@
-const { app, BrowserWindow, Menu } = require("electron");
+const path                                 = require('path');
+const os                                   = require('os');
+const { app, BrowserWindow, Menu, ipcMain, shell} = require("electron");
+const imagemin                             = require('imagemin');
+const imageminMozjpeg                      = require('imagemin-mozjpeg');
+const imageminPngquant                     = require('imagemin-pngquant');
+const slash                                = require('slash');
+const log                                  = require('electron-log');
+
 
 // set env
-process.env.NODE_ENV = "development";
+process.env.NODE_ENV = "production";
 
 // platform check
 const isDev = process.env.NODE_ENV !== "production" ? true : false;
 const isMac = process.platform     === "darwin"     ? true : false;
-const isWin = process.platform     === "win32"      ? true : false;
+// const isWin = process.platform     === "win32"      ? true : false;
 
 
 let mainWindow;
@@ -15,20 +23,23 @@ let aboutWindow
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     title: "Image Shrinker",
-    width: 500,
-    height: 600,
+    width:  isDev ? 800 : 500,
+    height: isDev ? 800 : 700,
     icon: `${__dirname}/assets/icons/Icon_256x256.png`,
     resizable: isDev,
     backgroundColor: 'white',
 
     webPreferences: {
-      nodeIntegration: false,
-      nodeIntegrationInWorker: false,
+      nodeIntegration: true,
+      // nodeIntegrationInWorker: false,
       worldSafeExecuteJavaScript : true
     },
+
   });
 
-  //   mainWindow.loadURL(`file://${__dirname}/app/index.html`);
+  if(isDev) {
+    mainWindow.webContents.openDevTools()
+  }
   mainWindow.loadFile("./app/index.html");
 }
 
@@ -36,8 +47,8 @@ function createMainWindow() {
 function createAboutWindow() {
   aboutWindow = new BrowserWindow({
     title: "About Image Shrinker",
-    width: 500,
-    height: 600,
+    width: 300,
+    height: 300,
     icon: `${__dirname}/assets/icons/Icon_256x256.png`,
     resizable: false,
     backgroundColor: 'white',
@@ -48,15 +59,29 @@ function createAboutWindow() {
       worldSafeExecuteJavaScript : true
     },
   });
+  aboutWindow.setMenu(null);
   aboutWindow.loadFile("./app/about.html");
 }
 
 
 const menu = [
-    ...(isMac ? [{ role: 'appMenu' }] : []),
+
+  ...(isMac ? [
+    { 
+      label: app.name,
+      submenu: [
+        {
+          label: 'About',
+          click: createAboutWindow
+        }
+      ]
+    }
+  ] : []),
+
   {
-      role: 'fileMenu'
+    role: 'fileMenu'
   },
+
   ...(isDev ? [
     { 
       label: 'Developer',
@@ -67,18 +92,61 @@ const menu = [
         { role: 'toggledevtools' },
       ]
     }
-]: [])
+  ]: []),
+
+  ...(!isMac ? [
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About',
+          click: createAboutWindow
+        }
+      ]
+    }
+  ]: []),
 ];
 
 
+ipcMain.on('image:minimize', (e, options) => {
+  options.destination = path.join(os.homedir(), 'image-shrinker')
+  // console.log(options);
+  shrinker(options);
+});
+
+async function shrinker({ imagePath, quality, destination }) {
+  try {
+
+    const pngQuality = quality / 100;
+
+    const files = await imagemin([slash(imagePath)], {
+      destination,
+      plugins: [
+        imageminMozjpeg({ quality }),
+        imageminPngquant({
+          quality: [pngQuality, pngQuality]
+        })
+      ]
+    });
+    log.info(files);
+
+    shell.openPath(destination)
+
+    mainWindow.webContents.send('image:done')
+
+  } catch (error) {
+    log.error(error);
+  }
+};
+
 app.on("ready", () => {
+
     createMainWindow()
-
     const mainMenu = Menu.buildFromTemplate(menu);
-    Menu.setApplicationMenu(mainMenu);
-
-    // globalShortcut.register('CmdOrCtrl+R', () => mainWindow.reload());
-    // globalShortcut.register(isMac ? 'Command+Alt+I' : 'Ctrl+Shift+I', () => mainWindow.toggleDevTools());
+    mainWindow.setMenu(mainMenu);
+    
+    // aboutWindow.removeMenu();
+    // Menu.setApplicationMenu(null);
 
     mainWindow.on('closed', () => mainWindow = null)
 });
